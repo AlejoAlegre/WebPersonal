@@ -517,7 +517,7 @@
         <div class="divider"></div>
         <div class="form-field" style="margin-bottom:0;">
           <label class="form-label">¿Qué hábito estás rastreando?</label>
-          <input type="text" class="form-input" id="habitNameInput" placeholder="Ej: Sin cigarrillos, Sin comida chatarra…" oninput="actualizarHabito()">
+          <input type="text" class="form-input" id="habitNameInput" placeholder="Ej: Sin cigarrillos, Sin comida chatarra…" onchange="actualizarHabito()">
         </div>
       </div>
       <div class="card">
@@ -866,22 +866,84 @@ function renderCalRachaCompleto(){
   }
   el.innerHTML=h+'</div>';
 }
-function toggleCeldaRacha(s){ const x=parseFecha(s); if(x>HOY)return; const v=estado.racha.dias[s]; if(v==='success')estado.racha.dias[s]='fail'; else if(v==='fail')delete estado.racha.dias[s]; else estado.racha.dias[s]='success'; guardar(); renderRacha(); actualizarDash(); }
-async function registrarRacha(exito) {
-  const fechaHoy = fmtFecha(HOY);
-  const habitName = document.getElementById('habitNameInput')
-    ? document.getElementById('habitNameInput').value.trim()
-    : (estado.racha.nombreHabito || '');
+async function guardarNombreHabitoEnSupabase(habitName) {
+  const { data, error } = await supabaseClient
+    .from('streak')
+    .select('date, status')
+    .eq('user_id', USER_ID)
+    .order('date', { ascending: false })
+    .limit(1);
 
-  const status = exito ? 'success' : 'fail';
+  if (error) {
+    console.error('Error leyendo streak para nombre de hábito:', error);
+    return false;
+  }
 
-  const ok = await guardarRachaEnSupabase(fechaHoy, status, habitName);
-  if (!ok) return;
+  if (data && data.length > 0) {
+    const ultimaFecha = data[0].date;
+    const ultimoStatus = data[0].status;
+
+    const { error: upError } = await supabaseClient
+      .from('streak')
+      .upsert([{
+        user_id: USER_ID,
+        date: ultimaFecha,
+        status: ultimoStatus,
+        habit_name: habitName || ''
+      }], {
+        onConflict: 'user_id,date'
+      });
+
+    if (upError) {
+      console.error('Error guardando nombre de hábito:', upError);
+      return false;
+    }
+  }
+
+  return true;
+}
+async function toggleCeldaRacha(s){
+  const x = parseFecha(s);
+  if (x > HOY) return;
+
+  const v = estado.racha.dias[s];
+  let nuevoStatus = null;
+
+  if (v === 'success') nuevoStatus = 'fail';
+  else if (v === 'fail') nuevoStatus = null;
+  else nuevoStatus = 'success';
+
+  if (nuevoStatus === null) {
+    const { error } = await supabaseClient
+      .from('streak')
+      .delete()
+      .eq('user_id', USER_ID)
+      .eq('date', s);
+
+    if (error) {
+      console.error('Error borrando día de racha:', error);
+      return;
+    }
+  } else {
+    const habitName = estado.racha.nombreHabito || '';
+    const ok = await guardarRachaEnSupabase(s, nuevoStatus, habitName);
+    if (!ok) return;
+  }
 
   estado.racha = await cargarRachaDesdeSupabase();
-  location.reload();
+  renderRacha();
+  actualizarDash();
+  renderVistaActual();
 }
-function actualizarHabito(){ estado.racha.nombreHabito=document.getElementById('habitNameInput').value; guardar(); const el=document.getElementById('dashStreakLabel'); if(el)el.textContent=estado.racha.nombreHabito||'días sin el mal hábito'; }
+async function actualizarHabito(){
+  const nuevoNombre = document.getElementById('habitNameInput').value;
+  estado.racha.nombreHabito = nuevoNombre;
+
+  await guardarNombreHabitoEnSupabase(nuevoNombre);
+
+  const el = document.getElementById('dashStreakLabel');
+  if (el) el.textContent = nuevoNombre || 'días sin el mal hábito';
+}
 
 // ── ESTADÍSTICAS ──
 function renderEstadisticas(){
@@ -899,7 +961,7 @@ function renderEstadisticas(){
 
 // ── TAREAS ──
 async function toggleTarea(id){
-  const t = estado.tareas.find(x => x.id == id);
+  const t = estado.tareas.find(x => x.id === id);
   if(!t) return;
 
   const nuevoEstado = !t.done;
@@ -907,7 +969,13 @@ async function toggleTarea(id){
   if(!ok) return;
 
   estado.tareas = await cargarTareasDesdeSupabase();
-  location.reload();
+
+  if(nuevoEstado){
+    toast(`✅ "${t.title.slice(0,30)}" ¡completada!`);
+  }
+
+  actualizarDash();
+  renderVistaActual();
 }
 function actualizarDash(){ if(document.getElementById('view-dashboard').classList.contains('active'))renderDash(); }
 function renderVistaActual(){ const v=document.querySelector('.view.active'); if(!v)return; renderVista(v.id.replace('view-','')); }
@@ -973,14 +1041,29 @@ async function actualizarTareaEnSupabase(id, done) {
   return true;
 }
 async function agregarTarea(){
-  const titulo=document.getElementById('inputTitle').value.trim(); if(!titulo){document.getElementById('inputTitle').focus();return;}
-  const t={id:Date.now(),title:titulo,cat:document.getElementById('inputCat').value,priority:document.getElementById('inputPriority').value,dueDate:document.getElementById('inputDate').value||null,notes:document.getElementById('inputNotes').value.trim(),done:false};
-  const ok = await guardarTareaEnSupabase(t);
-if (!ok) return;
+  const titulo=document.getElementById('inputTitle').value.trim();
+  if(!titulo){
+    document.getElementById('inputTitle').focus();
+    return;
+  }
 
-estado.tareas = await cargarTareasDesdeSupabase();
-cerrarModal();
-location.reload();
+  const t={
+    title:titulo,
+    cat:document.getElementById('inputCat').value,
+    priority:document.getElementById('inputPriority').value,
+    dueDate:document.getElementById('inputDate').value||null,
+    notes:document.getElementById('inputNotes').value.trim(),
+    done:false
+  };
+
+  const ok = await guardarTareaEnSupabase(t);
+  if (!ok) return;
+
+  estado.tareas = await cargarTareasDesdeSupabase();
+  cerrarModal();
+  toast(`✨ Tarea agregada en ${etiqCat(t.cat)}`);
+  actualizarDash();
+  renderVistaActual();
 }
 
 // ── TOAST ──
@@ -996,11 +1079,17 @@ function init(){
 }
 
 document.addEventListener('keydown',e=>{ if((e.metaKey||e.ctrlKey)&&e.key==='k'){e.preventDefault();abrirModal();} if(e.key==='Escape')cerrarModal(); });
-
+setInterval(async () => {
+  estado.tareas = await cargarTareasDesdeSupabase();
+  estado.racha = await cargarRachaDesdeSupabase();
+  actualizarDash();
+  renderVistaActual();
+}, 2000);
 init();
-renderDash();
+
 (async function () {
   await iniciarDesdeSupabase();
+  renderVistaActual();
 })();
 </script>
 </body>
