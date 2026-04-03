@@ -670,32 +670,6 @@ function etiqCat(c) { return({faculty:'Facultad',work:'Trabajo',training:'Entren
 if (estado.racha.days && !estado.racha.dias) estado.racha.dias = estado.racha.days;
 if (estado.racha.habitName && !estado.racha.nombreHabito) estado.racha.nombreHabito = estado.racha.habitName;
 
-if (estado.tareas.length === 0) {
-  const td=fmtFecha(HOY), man=fmtFecha(new Date(HOY.getTime()+86400000)),
-    en3=fmtFecha(new Date(HOY.getTime()+3*86400000)), en7=fmtFecha(new Date(HOY.getTime()+7*86400000)),
-    en14=fmtFecha(new Date(HOY.getTime()+14*86400000)), ayer=fmtFecha(new Date(HOY.getTime()-86400000));
-  estado.tareas=[
-    {id:1,title:'Repasar apuntes — Termodinámica cap. 4',cat:'faculty',priority:'high',dueDate:td,done:false,notes:''},
-    {id:2,title:'Entregar informe de laboratorio',cat:'faculty',priority:'high',dueDate:man,done:false,notes:'Formato: IEEE'},
-    {id:3,title:'Preparar para el parcial',cat:'faculty',priority:'high',dueDate:en7,done:false,notes:''},
-    {id:4,title:'Proyecto grupal — borrador sección 2',cat:'faculty',priority:'med',dueDate:en3,done:false,notes:''},
-    {id:5,title:'Responder email del cliente',cat:'work',priority:'high',dueDate:td,done:false,notes:''},
-    {id:6,title:'Terminar informe trimestral',cat:'work',priority:'med',dueDate:en3,done:false,notes:''},
-    {id:7,title:'Standup semanal del equipo',cat:'work',priority:'low',dueDate:td,done:true,notes:''},
-    {id:8,title:'Piernas — sentadillas + peso muerto',cat:'training',priority:'med',dueDate:td,done:false,notes:'Volumen: 5x5'},
-    {id:9,title:'Salida mañanera 5km',cat:'training',priority:'low',dueDate:td,done:true,notes:''},
-    {id:10,title:'Sesión de tren superior',cat:'training',priority:'med',dueDate:man,done:false,notes:''},
-    {id:11,title:'Leer "Trabajo profundo" cap. 3',cat:'personal',priority:'low',dueDate:en3,done:false,notes:''},
-    {id:12,title:'Llamar a mamá',cat:'personal',priority:'med',dueDate:td,done:false,notes:''},
-    {id:13,title:'Vencida — actualizar portfolio',cat:'personal',priority:'high',dueDate:ayer,done:false,notes:''},
-    {id:14,title:'Preparar presentación oral',cat:'faculty',priority:'high',dueDate:en14,done:false,notes:''},
-    {id:15,title:'Borrador de propuesta de proyecto',cat:'work',priority:'high',dueDate:en7,done:false,notes:''},
-  ];
-  const diasR={};
-  for(let i=6;i>=0;i--){ const d=fmtFecha(new Date(HOY.getTime()-i*86400000)); if(i!==4&&i!==0)diasR[d]='success'; else if(i===4)diasR[d]='fail'; }
-  estado.racha={dias:diasR,nombreHabito:'Alejarme de las redes sociales'};
-  guardar();
-}
 
 // ── NAVEGACIÓN ──
 const titulos={dashboard:'Inicio',calendar:'Calendario',tasks:'Todas las tareas',faculty:'Facultad',work:'Trabajo',training:'Entrenamiento',streak:'Racha',insights:'Estadísticas'};
@@ -726,7 +700,7 @@ function fmtDisplay(d){
 function tareaHTML(t){
   const v=estaVencida(t),cls=[t.done?'done':'',v?'overdue':''].filter(Boolean).join(' ');
   const p={high:'p-high',med:'p-med',low:'p-low'}[t.priority]||'p-low';
-  return`<div class="task-item ${cls}" onclick="toggleTarea(${t.id})">
+  return`<div class="task-item ${cls}" onclick="toggleTarea('${t.id}')">
     <div class="task-priority ${p}"></div>
     <div class="task-check">${t.done?'✓':''}</div>
     <div class="task-body">
