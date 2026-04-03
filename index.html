@@ -593,24 +593,74 @@
 </div>
 
 <div class="toast" id="toast"></div>
-
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
+  const SUPABASE_URL = 'https://sftreohfjbpjjfenptqf.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_q3nrBM89-01VM_TB-E3AXg_4fHoT2aQ';
+const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const USER_ID = 'alejo-personal';
 const HOY = new Date();
 HOY.setHours(0,0,0,0);
 
 const estado = {
-  tareas: JSON.parse(localStorage.getItem('apex_tasks') || '[]'),
-  racha: JSON.parse(localStorage.getItem('apex_streak') || '{"dias":{},"nombreHabito":""}'),
+  tareas: [],
+  racha: { dias: {}, nombreHabito: '' },
   calFecha: new Date(HOY),
   calSeleccionada: new Date(HOY),
   filtro: 'all',
 };
 
-function guardar() {
-  localStorage.setItem('apex_tasks', JSON.stringify(estado.tareas));
-  localStorage.setItem('apex_streak', JSON.stringify(estado.racha));
+async function guardar() {
+  console.log('Ahora guardaremos en Supabase');
 }
+async function cargarTareasDesdeSupabase() {
+  const { data, error } = await supabaseClient
+    .from('tasks')
+    .select('*')
+    .eq('user_id', USER_ID)
+    .order('created_at', { ascending: true });
 
+  if (error) {
+    console.error('Error cargando tareas:', error);
+    return [];
+  }
+
+  return data.map(t => ({
+    id: t.id,
+    title: t.title,
+    cat: t.cat,
+    priority: t.priority,
+    dueDate: t.due_date,
+    done: t.done,
+    notes: t.notes || ''
+  }));
+}
+async function iniciarDesdeSupabase() {
+  estado.tareas = await cargarTareasDesdeSupabase();
+  estado.racha = await cargarRachaDesdeSupabase();
+}
+async function cargarRachaDesdeSupabase() {
+  const { data, error } = await supabaseClient
+    .from('streak')
+    .select('*')
+    .eq('user_id', USER_ID)
+    .order('date', { ascending: true });
+
+  if (error) {
+    console.error('Error cargando racha:', error);
+    return { dias: {}, nombreHabito: '' };
+  }
+
+  const dias = {};
+  let nombreHabito = '';
+
+  data.forEach(item => {
+    dias[item.date] = item.status;
+    if (item.habit_name) nombreHabito = item.habit_name;
+  });
+
+  return { dias, nombreHabito };
+}
 function fmtFecha(d) { const dd=new Date(d); dd.setHours(0,0,0,0); return dd.toISOString().slice(0,10); }
 function parseFecha(s) { if(!s)return null; const[y,m,d]=s.split('-').map(Number); return new Date(y,m-1,d); }
 function estaVencida(t) { if(!t.dueDate||t.done)return false; return parseFecha(t.dueDate)<HOY; }
@@ -843,12 +893,19 @@ function renderCalRachaCompleto(){
   el.innerHTML=h+'</div>';
 }
 function toggleCeldaRacha(s){ const x=parseFecha(s); if(x>HOY)return; const v=estado.racha.dias[s]; if(v==='success')estado.racha.dias[s]='fail'; else if(v==='fail')delete estado.racha.dias[s]; else estado.racha.dias[s]='success'; guardar(); renderRacha(); actualizarDash(); }
-function registrarRacha(exito){
-  const td=fmtFecha(HOY);
-  if(estado.racha.dias[td]!==undefined){ toast('⚠️ Ya registraste hoy.',true); return; }
-  estado.racha.dias[td]=exito?'success':'fail'; guardar();
-  if(exito){ const r=calcRacha(); toast(`🔥 ¡Día ${r.actual} firme! Seguí adelante.`); } else toast('💪 Reinicio. Cada día es una nueva oportunidad.',true);
-  renderDash(); renderRacha();
+async function registrarRacha(exito) {
+  const fechaHoy = fmtFecha(HOY);
+  const habitName = document.getElementById('habitNameInput')
+    ? document.getElementById('habitNameInput').value.trim()
+    : (estado.racha.nombreHabito || '');
+
+  const status = exito ? 'success' : 'fail';
+
+  const ok = await guardarRachaEnSupabase(fechaHoy, status, habitName);
+  if (!ok) return;
+
+  estado.racha = await cargarRachaDesdeSupabase();
+  location.reload();
 }
 function actualizarHabito(){ estado.racha.nombreHabito=document.getElementById('habitNameInput').value; guardar(); const el=document.getElementById('dashStreakLabel'); if(el)el.textContent=estado.racha.nombreHabito||'días sin el mal hábito'; }
 
@@ -867,7 +924,17 @@ function renderEstadisticas(){
 }
 
 // ── TAREAS ──
-function toggleTarea(id){ const t=estado.tareas.find(x=>x.id===id); if(!t)return; t.done=!t.done; guardar(); if(t.done)toast(`✅ "${t.title.slice(0,30)}" ¡completada!`); actualizarDash(); renderVistaActual(); }
+async function toggleTarea(id){
+  const t = estado.tareas.find(x => x.id == id);
+  if(!t) return;
+
+  const nuevoEstado = !t.done;
+  const ok = await actualizarTareaEnSupabase(id, nuevoEstado);
+  if(!ok) return;
+
+  estado.tareas = await cargarTareasDesdeSupabase();
+  location.reload();
+}
 function actualizarDash(){ if(document.getElementById('view-dashboard').classList.contains('active'))renderDash(); }
 function renderVistaActual(){ const v=document.querySelector('.view.active'); if(!v)return; renderVista(v.id.replace('view-','')); }
 
@@ -878,10 +945,68 @@ function abrirModalConFecha(){ abrirModal(); document.getElementById('inputDate'
 function cerrarModal(){ document.getElementById('modalOverlay').classList.remove('open'); limpiarModal(); }
 function cerrarModalAfuera(e){ if(e.target===document.getElementById('modalOverlay'))cerrarModal(); }
 function limpiarModal(){ document.getElementById('inputTitle').value=''; document.getElementById('inputNotes').value=''; document.getElementById('inputPriority').value='med'; document.getElementById('inputCat').value='personal'; document.getElementById('inputDate').value=fmtFecha(HOY); }
-function agregarTarea(){
+async function guardarTareaEnSupabase(tarea) {
+  const { error } = await supabaseClient
+    .from('tasks')
+    .insert([{
+      user_id: USER_ID,
+      title: tarea.title,
+      cat: tarea.cat,
+      priority: tarea.priority,
+      due_date: tarea.dueDate || null,
+      done: tarea.done || false,
+      notes: tarea.notes || ''
+    }]);
+
+  if (error) {
+    console.error('Error guardando tarea:', error);
+    return false;
+  }
+
+  return true;
+}
+async function guardarRachaEnSupabase(fecha, status, habitName) {
+  const { error } = await supabaseClient
+    .from('streak')
+    .upsert([{
+      user_id: USER_ID,
+      date: fecha,
+      status: status,
+      habit_name: habitName || ''
+    }], {
+      onConflict: 'user_id,date'
+    });
+
+  if (error) {
+    console.error('Error guardando racha:', error);
+    return false;
+  }
+
+  return true;
+}
+async function actualizarTareaEnSupabase(id, done) {
+  const { error } = await supabaseClient
+    .from('tasks')
+    .update({ done: done })
+    .eq('id', id)
+    .eq('user_id', USER_ID);
+
+  if (error) {
+    console.error('Error actualizando tarea:', error);
+    return false;
+  }
+
+  return true;
+}
+async function agregarTarea(){
   const titulo=document.getElementById('inputTitle').value.trim(); if(!titulo){document.getElementById('inputTitle').focus();return;}
   const t={id:Date.now(),title:titulo,cat:document.getElementById('inputCat').value,priority:document.getElementById('inputPriority').value,dueDate:document.getElementById('inputDate').value||null,notes:document.getElementById('inputNotes').value.trim(),done:false};
-  estado.tareas.unshift(t); guardar(); cerrarModal(); toast(`✨ Tarea agregada en ${etiqCat(t.cat)}`); renderVistaActual(); actualizarDash();
+  const ok = await guardarTareaEnSupabase(t);
+if (!ok) return;
+
+estado.tareas = await cargarTareasDesdeSupabase();
+cerrarModal();
+location.reload();
 }
 
 // ── TOAST ──
@@ -900,6 +1025,9 @@ document.addEventListener('keydown',e=>{ if((e.metaKey||e.ctrlKey)&&e.key==='k')
 
 init();
 renderDash();
+(async function () {
+  await iniciarDesdeSupabase();
+})();
 </script>
 </body>
 </html>
