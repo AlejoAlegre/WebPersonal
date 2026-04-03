@@ -146,6 +146,9 @@
   .task-item { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); transition: all 0.15s; cursor: pointer; }
   .task-item:last-child { border-bottom: none; padding-bottom: 0; }
   .task-item:hover { padding-left: 4px; }
+  .task-delete { flex-shrink: 0; width: 18px; height: 18px; margin-top: 1px; border-radius: 4px; border: none; background: transparent; color: var(--text-muted); font-size: 13px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; opacity: 0; transition: all 0.15s; padding: 0; }
+  .task-item:hover .task-delete { opacity: 1; }
+  .task-delete:hover { background: var(--danger-dim); color: var(--danger); }
   .task-check { width: 18px; height: 18px; flex-shrink: 0; border: 2px solid var(--border-strong); border-radius: 5px; margin-top: 1px; cursor: pointer; transition: all 0.2s ease; display: flex; align-items: center; justify-content: center; font-size: 11px; color: transparent; }
   .task-item.done .task-check { background: var(--cat-work); border-color: var(--cat-work); color: #fff; }
   .task-item.done .task-text { text-decoration: line-through; color: var(--text-muted); }
@@ -517,7 +520,7 @@
         <div class="divider"></div>
         <div class="form-field" style="margin-bottom:0;">
           <label class="form-label">¿Qué hábito estás rastreando?</label>
-          <input type="text" class="form-input" id="habitNameInput" placeholder="Ej: Sin cigarrillos, Sin comida chatarra…" onchange="actualizarHabito()">
+          <input type="text" class="form-input" id="habitNameInput" placeholder="Ej: Sin cigarrillos, Sin comida chatarra…" oninput="actualizarHabito()">
         </div>
       </div>
       <div class="card">
@@ -711,6 +714,7 @@ function tareaHTML(t){
         ${t.notes?`<span style="font-size:10px;color:var(--text-muted)">📝 ${t.notes}</span>`:''}
       </div>
     </div>
+    <button class="task-delete" onclick="event.stopPropagation();eliminarTarea('${t.id}')" title="Eliminar">✕</button>
   </div>`;
 }
 function vacio(i,t){ return`<div class="empty-state"><div class="empty-state-icon">${i}</div><div class="empty-state-text">${t}</div></div>`; }
@@ -902,6 +906,26 @@ async function guardarNombreHabitoEnSupabase(habitName) {
 
   return true;
 }
+async function registrarRacha(exito){
+  const td = fmtFecha(HOY);
+  if (estado.racha.dias[td] !== undefined) {
+    toast('⚠️ Ya registraste hoy.', true);
+    return;
+  }
+  const nuevoStatus = exito ? 'success' : 'fail';
+  const habitName = estado.racha.nombreHabito || '';
+  const ok = await guardarRachaEnSupabase(td, nuevoStatus, habitName);
+  if (!ok) return;
+  estado.racha = await cargarRachaDesdeSupabase();
+  if (exito) {
+    const r = calcRacha();
+    toast(`🔥 ¡Día ${r.actual} firme! Seguí adelante.`);
+  } else {
+    toast('💪 Reinicio. Cada día es una nueva oportunidad.', true);
+  }
+  renderDash();
+  renderRacha();
+}
 async function toggleCeldaRacha(s){
   const x = parseFecha(s);
   if (x > HOY) return;
@@ -939,7 +963,23 @@ async function actualizarHabito(){
   const nuevoNombre = document.getElementById('habitNameInput').value;
   estado.racha.nombreHabito = nuevoNombre;
 
-  await guardarNombreHabitoEnSupabase(nuevoNombre);
+  // Upsert today's date so we always have a row to store the habit name against
+  const td = fmtFecha(HOY);
+  const statusHoy = estado.racha.dias[td] || 'none';
+  await supabaseClient
+    .from('streak')
+    .upsert([{
+      user_id: USER_ID,
+      date: td,
+      status: statusHoy,
+      habit_name: nuevoNombre || ''
+    }], { onConflict: 'user_id,date' });
+
+  // Also update all existing rows so the habit name is consistent everywhere
+  await supabaseClient
+    .from('streak')
+    .update({ habit_name: nuevoNombre || '' })
+    .eq('user_id', USER_ID);
 
   const el = document.getElementById('dashStreakLabel');
   if (el) el.textContent = nuevoNombre || 'días sin el mal hábito';
@@ -974,6 +1014,24 @@ async function toggleTarea(id){
     toast(`✅ "${t.title.slice(0,30)}" ¡completada!`);
   }
 
+  actualizarDash();
+  renderVistaActual();
+}
+async function eliminarTarea(id){
+  const { error } = await supabaseClient
+    .from('tasks')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', USER_ID);
+
+  if (error) {
+    console.error('Error eliminando tarea:', error);
+    toast('Error al eliminar la tarea.', true);
+    return;
+  }
+
+  estado.tareas = await cargarTareasDesdeSupabase();
+  toast('🗑 Tarea eliminada.');
   actualizarDash();
   renderVistaActual();
 }
